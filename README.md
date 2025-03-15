@@ -1,4 +1,11 @@
 # Buddhabrot
+This fork includes a hacky update to experiment on modern hardware (Apple M4 Pro).
+
+Adds support for multithreading using C++11 and Apple GPU using Metal. 
+
+None of this has been optimized for thread partitioning, buffers or reduction. The GPU implementation could be tiled more aggressively (smaller tiles, horizontally and vertically) to allow for even larger resolutions (into the Gigapixels).
+
+--------
 
 Optimized [Buddhabrot](http://en.wikipedia.org/wiki/Buddhabrot) HDR image generators:
 
@@ -10,7 +17,7 @@ Optimized [Buddhabrot](http://en.wikipedia.org/wiki/Buddhabrot) HDR image genera
 
 # Full image
 
-This 4,500 x 6000 (27 Mega pixels!) at 524,288 depth [image](https://github.com/Michaelangel007/buddhabrot/blob/master/pics/4500x6000/ps_7F9CFF_buddhabrot_4500x6000_512Kd.png) took 1 day, 18 hours on a MacBook Pro (i7 @ 2.8 GHz) utilizing all 8 cores.
+This 4,500 x 6000 (27 Mega pixels!) at 524,288 depth [image](https://github.com/Michaelangel007/buddhabrot/blob/master/pics/4500x6000/ps_7F9CFF_buddhabrot_4500x6000_512Kd.png) took 1 day, 18 hours on a MacBook Pro (i7 @ 2.8 GHz) utilizing all 8 cores. (UPDATE: on Apple M4 Pro GPU the same image took 11 minutes 47 seconds!)
 
 Here is a thumbnail image at 30% size (1350x1800):
 
@@ -37,6 +44,68 @@ The maximum depth effects how many finer details are visible. Here are some dept
 <br><img src="https://raw.githubusercontent.com/Michaelangel007/buddhabrot/master/pics/400x300/400x300@1M.png"  > Depth 1,048,576
 
 NOTE: These are HDR (High Dynamic Range) 16-bit single channel images (monochrome) converted into a SR (Standard Range) 8-bit / channel "false color" image.
+
+# New Multithread CPU implementation:
+
+The multithread implementation is in `buddhabrotmulti.cpp`
+
+In this version the main Buddhabrot loop (which iterates over the “columns” in world–space) is split among all available CPU cores using C++11 threads. Each thread works on its own temporary (local) accumulation buffer (to avoid data races when updating pixel counts) and then, after all threads finish, the thread–local results are summed into the global output array.
+
+On the M4 Pro chip, there are 14 total cores, but only 10 are used with the 4 efficiency cores reserved for other tasks. 
+
+Compile with clang:
+
+```bash
+clang++ -std=c++11 -O2 buddhabrotmulti.cpp -o buddhabrotmulti -lpthread
+```
+
+# Apple Metal GPU Implementation
+
+Using the Apple GPU requires splitting the work into two parts: a Metal kernel (in a separate “.metal” file) and an Objective‑C++ host function (in the “.mm” file) that sets up the Metal pipeline, dispatches the compute kernel, and retrieves the results. 
+
+The M4 Pro is a 20 core GPU. 
+
+Compile the Metal Shader first to an intermediate AIR file:
+
+```bash
+xcrun -sdk macosx metal -c BuddhabrotKernel.metal -o BuddhabrotKernel.air    
+```
+
+Then package the AIR file into a Metal library:
+
+```bash
+xcrun -sdk macosx metallib BuddhabrotKernel.air -o BuddhabrotKernel.metallib 
+```
+
+Then compile your Objective-C++ host:
+
+```bash
+clang++ -std=c++11 -O2 buddhabrotgpu.mm -o buddhabrotgpu -framework Metal -framework Foundation -DUSE_METAL 
+```
+
+Then you can run with hardcoded defaults or by passing it a configuration:
+
+```bash
+./buddhabrotgpu 34560 25920 10000 10 
+```
+
+## Bench times
+
+
+| Depth           | 1k (min:sec) | 10k | 100k | 1M | 10M | 
+|--------------------|------|------|------|------|------|
+| Apple M4 Pro CPU Multithread | 00:08 | 01:16 | 12:42 | NA | NA |
+| Apple M4 Pro GPU | 00:00 | 00:01 | 00:04 | 0:39 | 6:25 | 
+
+
+I was able to generate images up to 23040x17280 (400MP!) without aliasing from precision issues. 
+
+On my Apple M4 Pro, 23040x17280 at 1000 iterations and a scale factor of 10 took 2mins 15seconds to generate. 
+
+for fun, I ran a comparison at 11,520 X 8,640 at 1000 depth. CPU multithreaded took 16 minutes 16 seconds, where the GPU took just 19 seconds! I pushed the GPU a bit further to explore, at the same resolution at a depth of 10,000,000 it took 13 hours, 50 minutes. 
+
+
+
 
 # HDR
 
